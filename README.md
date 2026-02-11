@@ -1,92 +1,143 @@
-下面是根据您提供的代码和背景信息编写的README文档。
+# ML Challenge — Feature Extraction & Baseline Model
 
-# EDFA增益谱预测模型
+This repository contains two main scripts that take you from raw JSON measurement data to a Kaggle-style submission:
 
-## 项目概述
-本项目基于深度学习技术，开发了一个用于预测**掺铒光纤放大器（EDFA）在多载波配置下的增益谱**的回归模型。该模型能够根据输入的频谱信息、目标增益、总输入/输出功率等特征，预测每个通道的增益值，特别解决了**仅部分通道被激活（mask-aware）** 场景下的预测问题。
+1. **Feature extraction** &rarr; builds train/test CSVs from JSON  
+2. **ML example** &rarr; trains a DNN and writes predictions for the test set  
 
-## 模型特点
-- **Mask-Aware损失函数**：自定义损失函数（`custom_loss_L2`）仅计算被激活通道的预测误差，忽略未加载通道的影响。
-- **鲁棒性设计**：通过正则化（L2）、Dropout和LeakyReLU激活函数增强模型泛化能力，避免过拟合。
-- **多通道回归**：同时预测95个通道的增益值，支持稀疏/密集加载场景的增益波动建模。
+Additionally, **COSMOS_EDFA_Dataset** is under `dataset/`, which provides extra EDFA measurement data. These are optional to use, but available if you want to extend training and evaluation.  
 
-## 文件结构
-```
-项目根目录/
-├── Features/
-│   ├── Train/                 # 训练数据
-│   │   ├── COSMOS_features.csv
-│   │   └── COSMOS_labels.csv
-│   └── Test/
-│       └── test_features0.csv
-├── figures/                   # 生成的图表
-├── model/                     # 保存的模型
-├── 训练脚本.py                 # 主训练代码
-└── README.md
+---
+
+## Environment
+
+- Recommended Python version: **3.12.7**  
+
+```bash
+pip install -U pip
+pip install pandas numpy matplotlib tensorflow prettytable scipy scikit-learn
 ```
 
-## 核心代码说明
-### 1. 数据预处理
-- **单位转换**：提供`dB_to_linear()`和`linear_TO_Db()`函数用于线性与分贝值转换。
-- 通道标签生成：自动创建95个通道的输入频谱、WSS激活通道和增益结果的列名。
+> The feature extraction script imports `libs.edfa_feature_extraction_libs` and `libs.edfaBasicLib`.  
 
-### 2. 模型架构
-```python
-模型结构：
-- 输入层：特征维度 = 95×2 + 6
-- 隐藏层1：512个神经元 + LeakyReLU + L2正则化
-- 隐藏层2：256个神经元 + LeakyReLU + L2正则化  
-- 隐藏层3：128个神经元 + LeakyReLU + Dropout(0.2)
-- 输出层：95个神经元（线性激活）
+---
+
+## Expected Folder Layout
+
 ```
-优化器：RMSprop（学习率=0.001）
-
-### 3. 自定义损失函数
-```python
-def custom_loss_L2(y_actual, y_pred):
-    # 仅计算被激活通道（y_actual ≠ 0）的RMSE
-    loaded_size = 非零通道数
-    y_pred_masked = 将未激活通道预测置零
-    error = sqrt(∑(y_pred_masked - y_actual)² / loaded_size)
+.
+├── code
+│   ├── kaggle_feature_extraction_user.ipynb
+│   ├── ML_example_kaggle.ipynb
+│   └── libs
+│       ├── edfaBasicLib.py
+│       └── edfa_feature_extraction_libs.py
+│
+├── dataset
+│   ├── COSMOS_EDFA_Dataset        # optional additional data
+│   │   ├── booster/{15dB,18dB,21dB}/...
+│   │   └── preamp/{15dB,18dB,21dB,24dB,27dB}/...
+│   └── ML_challenge_user
+│       ├── Test
+│       │   ├── aging/*.json
+│       │   ├── shb/*.json
+│       │   └── unseen/*.json
+│       └── Train
+│           ├── aging/*.json
+│           ├── shb/*.json
+│           └── unseen/*.json
+│
+├── Features
+│   ├── Test
+│   │   ├── test_features0.csv
+│   │   ├── test_labels.csv
+│   │   ├── aging/features/*.csv
+│   │   ├── shb/features/*.csv
+│   │   └── unseen/features/*.csv
+│   └── Train
+│       ├── train_features0.csv
+│       ├── train_labels.csv
+│       ├── COSMOS_features.csv          # optional features
+│       ├── COSMOS_labels.csv            # optional labels
+│       ├── aging/{features,labels}/*.csv
+│       ├── shb/{features,labels}/*.csv
+│       └── unseen/{features,labels}/*.csv
+│
+├── figures
+│
+├── manual
+│   └── Ranges_ProductGuide_ROADM.pdf
+│
+└── model
+    └── ML_example_model.h5
 ```
-该设计使损失函数仅关注有效通道，适应WSS部分加载的动态场景。
 
-## 训练与验证
-### 波动性分析
-验证损失（val_loss）波动是正常现象，主要原因包括：
-1. **批间差异**：不同批次包含的激活通道组合不同，导致有效样本量动态变化。
-2. **数据异方差性**：稀疏加载时增益易预测，密集饱和时误差天然较大。
-3. **损失计算方式**：RMSE的分母（激活通道数）随样本变化，放大统计波动。
+---
 
-### 评估指标
-- **关键指标**：关注激活通道的预测误差（如95%误差在±0.2dB内）。
-- 辅助可视化：提供增益散点图、误差直方图、分通道MSE曲线等诊断工具。
+## What Each Script Does
 
-## 使用指南
-### 训练模型
-1. 配置数据路径：
-   ```python
-   TRAIN_FEATURE_PATH = "../Features/Train/COSMOS_features.csv"
-   TEST_FEATURE_PATH = "../Features/Test/test_features0.csv"
-   ```
-2. 调整超参数（如需）：
-   - 学习率（`RMSprop`参数）
-   - 正则化强度（`kernel_regularizer`）
-   - Dropout比率
-3. 运行训练脚本，模型将自动保存至`../model/`。
+### `code/kaggle_feature_extraction_user.ipynb`
 
-### 结果解读
-- **正常波动**：val_loss在0.25–0.35间震荡，但训练损失稳定下降，且预测谱形准确。
-- **异常信号**：val_loss持续上升或突然爆炸（如翻倍），预测谱形失真。
+- Reads raw JSON files from:
+  - `dataset/ML_challenge_user/Train/{shb,aging,unseen}`
+  - `dataset/ML_challenge_user/Test/{shb,aging,unseen}`
+  - (Optionally) `dataset/COSMOS_EDFA_Dataset/{booster,preamp}/*/*.json`
+- Extracts features using `featureExtraction_ML` and utilities in `libs/`.
+- Infers:
+  - **EDFA type** (`preamp` or `booster`)
+  - **channel type** (`random`, `fix`, `goalpost`, `extraRandom`, `extraLow`)
+  - **EDFA name** &rarr; mapped to index via dictionary
+- Outputs intermediate CSVs for each dataset.
+- Splits each CSV into:
+  - `*_features.csv` (input features)
+  - `*_labels.csv` (target gain spectra, masked by WSS activity)
+- Combines into Kaggle-style files:
+  - `Features/Train/train_features.csv`
+  - `Features/Train/train_labels.csv`
+  - `Features/Test/test_features.csv` (adds `ID`, `Usage`, `Category`)
+  - `Features/Train/COSMOS_features.csv` and `COSMOS_labels.csv` (optional)
 
-## 典型应用场景
-- **波分复用（WDM）系统**：评估多级EDFA的增益平坦度。
-- **动态信道分配**：预测WSS重构后EDFA的瞬态响应。
-- **硬件在环测试**：结合光通信测试平台验证模型泛化能力。
+### `bigmodelML_example_kaggle.ipynb`
 
-## 注意事项
-1. 数据一致性：确保输入频谱功率单位与训练数据一致（dBm或线性值）。
-2. 通道映射：WSS激活通道索引必须与训练数据的标签对齐。
-3. 非线性效应：模型基于小信号增益假设，强饱和工况下需重新校准。
+- Loads:
+  - `Features/Train/COSMOS_features.csv`
+  - `Features/Train/COSMOS_labels.csv`
+  - `Features/Test/test_features0.csv`
+- Defines and trains a DNN:
+  - Custom **L2 loss** computed only on loaded channels
+  - Optimizer = 500 epochs, 20% validation split
+- Saves trained model:
+  - `model/ML_example_model.h5`
+- Predicts on test set, inserts Kaggle `ID`.
+- Outputs Kaggle-style submission:
+  - `Features/Test/test_labels.csv`
 
-此项目通过结合深度学习与光通信物理特性，提供了EDFA增益预测的实用解决方案，特别适用于部分加载场景的精确建模。
+---
+
+## How to Run (VS Code)
+
+1. Open the repo in VS Code.  
+2. Open `code/kaggle_feature_extraction_user.ipynb`.  
+3. Select the correct Python kernel.  
+4. Run all cells. This generates CSVs under `Features/Train` and `Features/Test`.  
+   - If you want to include COSMOS data, adjust the notebook accordingly.  
+5. Open `code/ML_example_kaggle.ipynb`.  
+6. Run all cells. Outputs:  
+   - `model/ML_example_model.h5`  
+   - `figures/*.png` (if plotting cells executed)  
+   - `Features/Test/test_labels.csv` (predictions)  
+
+---
+
+## Outputs
+
+After running both scripts you should have:
+
+- `Features/Train/COSMOS_features.csv`  
+- `Features/Train/COSMOS_labels.csv`  
+- `Features/Test/test_features0.csv`  
+- `Features/Test/test_labels.csv` &larr; Kaggle-style predictions  
+- `model/ML_example_model.h5`  
+- `figures/*.png` (optional plots)  
+- `Features/Train/COSMOS_features.csv`, `COSMOS_labels.csv` (optional, if COSMOS used)
+
